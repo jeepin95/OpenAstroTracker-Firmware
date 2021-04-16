@@ -88,7 +88,11 @@ void stepperControlTimerCallback(void* payload) {
 void setup() {
 
   #if USE_GPS == 1
-  GPS_SERIAL_PORT.begin(GPS_BAUD_RATE);
+    #if defined(GPS_SERIAL_PORT_RX_PIN) && defined(GPS_SERIAL_PORT_TX_PIN)
+      GPS_SERIAL_PORT.begin(GPS_BAUD_RATE, GPS_SERIAL_PORT_RX_PIN, GPS_SERIAL_PORT_TX_PIN);
+    #else
+      GPS_SERIAL_PORT.begin(GPS_BAUD_RATE);
+    #endif
   #endif
 
   //Turn on dew heater
