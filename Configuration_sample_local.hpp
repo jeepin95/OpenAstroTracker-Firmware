@@ -69,22 +69,37 @@
 
 /**
  * @brief Automated azimuth/altitude adjustment configuration.
- * Set AZIMUTH_ALTITUDE_MOTORS to 1 to enable, 0 or #undef to exclude AZ/ALT from configuration.
+ * Set AZ_STEPPER_TYPE and ALT_STEPPER_TYPE to the correct stepper type to 
+ * enable, or to STEPPER_TYPE_NONE to exclude AZ/ALT from configuration.
  */
-#define AZIMUTH_ALTITUDE_MOTORS  0
-#define AZ_STEPPER_TYPE     STEPPER_TYPE_28BYJ48
-#define ALT_STEPPER_TYPE    STEPPER_TYPE_28BYJ48
-#define AZ_DRIVER_TYPE      DRIVER_TYPE_ULN2003
-#define ALT_DRIVER_TYPE     DRIVER_TYPE_ULN2003
+#define AZ_STEPPER_TYPE     STEPPER_TYPE_NONE
+#define ALT_STEPPER_TYPE    STEPPER_TYPE_NONE
+#define AZ_DRIVER_TYPE      DRIVER_TYPE_NONE
+#define ALT_DRIVER_TYPE     DRIVER_TYPE_NONE
 #define AZ_CORRECTION_FACTOR 1.000f
 #define ALT_CORRECTION_FACTOR 1.000f
 
 // TMC2209 UART settings
 // These settings work only with TMC2209 in UART connection (single wire to TX)
-#define AZ_MOTOR_CURRENT_RATING 0       // Current rating of AZ motor in mA
-#define AZ_OPERATING_CURRENT_SETTING 100  // AZ operating setting as a percentage of motor rating
-#define ALT_MOTOR_CURRENT_RATING 0      // Current rating of ALT motor in mA
+#define AZ_MOTOR_CURRENT_RATING 0          // Current rating of AZ motor in mA
+#define AZ_OPERATING_CURRENT_SETTING 100   // AZ operating setting as a percentage of motor rating
+#define ALT_MOTOR_CURRENT_RATING 0         // Current rating of ALT motor in mA
 #define ALT_OPERATING_CURRENT_SETTING 100  // ALT operating setting as a percentage of motor rating
+
+/**
+ * @brief Focus
+ * Set FOCUS_STEPPER_TYPE to the correct stepper type to 
+ * enable, or to STEPPER_TYPE_NONE to exclude Focus from configuration.
+ */
+#define FOCUS_STEPPER_TYPE    STEPPER_TYPE_NEMA17
+#define FOCUS_DRIVER_TYPE     DRIVER_TYPE_TMC2209_UART
+
+// TMC2209 UART settings
+// These settings work only with TMC2209 in UART connection (single wire to TX)
+#define FOCUS_MOTOR_CURRENT_RATING         0     // Current rating of focus motor in mA
+#define FOCUS_OPERATING_CURRENT_SETTING  100     // Operating setting as a percentage of focus motor rating
+#define FOCUS_STEPPER_SPEED              200     // Default speed when moving focus motor in steps/s
+#define FOCUS_UART_STEALTH_MODE            1     // Run the focuser silently
 
 /**
  * @brief Display & keypad configuration.

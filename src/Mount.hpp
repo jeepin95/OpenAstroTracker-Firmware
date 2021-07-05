@@ -16,6 +16,7 @@ class TMC2209Stepper;
 #define WEST                       B00001000
 #define ALL_DIRECTIONS             B00001111
 #define TRACKING                   B00010000
+#define FOCUSING                   B00100000
 
 #define LCDMENU_STRING      B0001
 #define MEADE_STRING        B0010
@@ -27,16 +28,31 @@ class TMC2209Stepper;
 #define TARGET_STRING      B01000
 #define CURRENT_STRING     B10000
 
-#define RA_STEPS  1
-#define DEC_STEPS 2
-#define AZIMUTH_STEPS 5
-#define ALTITUDE_STEPS 6
+enum StepperAxis {
+  RA_STEPS,
+  DEC_STEPS,
+  AZIMUTH_STEPS,
+  ALTITUDE_STEPS,
+  FOCUS_STEPS
+};
 
 struct LocalDate {
   int year;
   int month;
   int day;
 };
+
+// Focuser support
+enum FocuserMode {
+  FOCUS_IDLE,
+  FOCUS_TO_TARGET,
+  FOCUS_CONTINUOUS,
+} ;
+
+enum FocuserDirection {
+  FOCUS_BACKWARD = -1,
+  FOCUS_FORWARD = 1
+} ;
 
 //////////////////////////////////////////////////////////////////
 //
@@ -67,17 +83,30 @@ public:
     void configureDECStepper(byte pin1, byte pin2, int maxSpeed, int maxAcceleration);
 #endif
 
-// Configure the AZ/ALT stepper motors.
-#if AZIMUTH_ALTITUDE_MOTORS == 1
+// Configure the AZ stepper motors.
+#if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
   #if AZ_DRIVER_TYPE == DRIVER_TYPE_ULN2003
     void configureAZStepper(byte pin1, byte pin2, byte pin3, byte pin4, int maxSpeed, int maxAcceleration);
   #elif AZ_DRIVER_TYPE == DRIVER_TYPE_A4988_GENERIC || AZ_DRIVER_TYPE == DRIVER_TYPE_TMC2209_STANDALONE || AZ_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART
     void configureAZStepper(byte pin1, byte pin2, int maxSpeed, int maxAcceleration);
   #endif
+#endif
+
+// Configure the ALT stepper motors.
+#if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
   #if ALT_DRIVER_TYPE == DRIVER_TYPE_ULN2003
     void configureALTStepper(byte pin1, byte pin2, byte pin3, byte pin4, int maxSpeed, int maxAcceleration);
   #elif ALT_DRIVER_TYPE == DRIVER_TYPE_A4988_GENERIC || ALT_DRIVER_TYPE == DRIVER_TYPE_TMC2209_STANDALONE || ALT_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART
     void configureALTStepper(byte pin1, byte pin2, int maxSpeed, int maxAcceleration);
+  #endif
+#endif
+
+// Configure the Focus stepper motors.
+#if (FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE)
+  #if FOCUS_DRIVER_TYPE == DRIVER_TYPE_ULN2003
+    void configureFocusStepper(byte pin1, byte pin2, byte pin3, byte pin4, int maxSpeed, int maxAcceleration);
+  #elif FOCUS_DRIVER_TYPE == DRIVER_TYPE_A4988_GENERIC || FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_STANDALONE || FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART
+    void configureFocusStepper(byte pin1, byte pin2, int maxSpeed, int maxAcceleration);
   #endif
 #endif
 
@@ -102,8 +131,8 @@ public:
 #endif
 
 
-// Configure the AZ/ALT drivers.
-#if AZIMUTH_ALTITUDE_MOTORS == 1
+// Configure the AZ driver.
+#if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
   #if AZ_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART
     #if SW_SERIAL_UART == 0
       void configureAZdriver(Stream *serial, float rsense, byte driveraddress, int rmscurrent, int stallvalue);
@@ -111,11 +140,26 @@ public:
       void configureAZdriver(uint16_t AZ_SW_RX, uint16_t AZ_SW_TX, float rsense, byte driveraddress, int rmscurrent, int stallvalue);
     #endif
   #endif
+#endif
+
+// Configure the ALT driver.
+#if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
   #if ALT_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART
     #if SW_SERIAL_UART == 0
       void configureALTdriver(Stream *serial, float rsense, byte driveraddress, int rmscurrent, int stallvalue);
     #elif SW_SERIAL_UART == 1
       void configureALTdriver(uint16_t AlT_SW_RX, uint16_t ALT_SW_TX, float rsense, byte driveraddress, int rmscurrent, int stallvalue);
+    #endif
+  #endif
+#endif
+
+// Configure the Focus driver.
+#if (FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE)
+  #if FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART
+    #if SW_SERIAL_UART == 0
+      void configureFocusDriver(Stream *serial, float rsense, byte driveraddress, int rmscurrent, int stallvalue);
+    #elif SW_SERIAL_UART == 1
+      void configureFocusDriver(uint16_t FOCUS_SW_RX, uint16_t FOCUS_SW_TX, float rsense, byte driveraddress, int rmscurrent, int stallvalue);
     #endif
   #endif
 #endif
@@ -141,11 +185,11 @@ public:
 #endif
 
   // Returns the number of slew microsteps the given motor turns to move one degree
-  float getStepsPerDegree(int which);
+  float getStepsPerDegree(StepperAxis which);
 
   // Function to set the number of slew microsteps the given motor turns to move one 
   // degree for each axis. This function stores the value in persistent storage
-  void setStepsPerDegree(int which, float steps);
+  void setStepsPerDegree(StepperAxis which, float steps);
 
   // Sets the slew rate of the mount. rate is between 1 (slowest) and 4 (fastest)
   void setSlewRate(int rate);
@@ -194,10 +238,16 @@ public:
   bool isParking() const;
   bool isGuiding() const;
   bool isFindingHome() const;
-  #if AZIMUTH_ALTITUDE_MOTORS == 1
+  #if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
   bool isRunningAZ() const;
+  #endif
+  #if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
   bool isRunningALT() const;
-  void getAltAzPositions(long * altSteps, long* azSteps, float* altDelta, float*  azDelta);
+  #endif
+
+  #if (FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE)
+  bool isRunningFocus() const;
+  float getFocusSpeed() const;
   #endif
 
   // Starts manual slewing in one of eight directions or tracking
@@ -284,14 +334,29 @@ public:
   void setManualSlewMode(bool state);
 
   // Set the speed of the given motor
-  void setSpeed(int which, float speedDegsPerSec);
+  void setSpeed(StepperAxis which, float speedDegsPerSec);
 
-#if AZIMUTH_ALTITUDE_MOTORS == 1
+#if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE) || (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
   // Support for moving the mount in azimuth and altitude (requires extra hardware)
   void moveBy(int direction, float arcMinutes);
   void disableAzAltMotors();
   void enableAzAltMotors();
 #endif
+
+#if (FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE)
+  // Support for focus motor (requires extra hardware)
+  void focusSetSpeedByRate(int rate);
+  void focusContinuousMove(FocuserDirection direction);
+  void focusMoveBy(long steps);
+  long focusGetStepperPosition();
+  void focusSetStepperPosition(long steps);
+  void disableFocusMotor();
+  void enableFocusMotor();
+  void focusStop();
+#endif
+
+  // Move the giuven stepper motor by the given amount of steps.
+  void moveStepperBy(StepperAxis which, long steps);
 
   // Set the number of steps to use for backlash correction
   void setBacklashCorrection(int steps);
@@ -323,9 +388,9 @@ public:
 
   int getLocalUtcOffset() const;
 
-  void setLocalStartDate( int year, int month, int day );
-  void setLocalStartTime( DayTime localTime );
-  void setLocalUtcOffset( int offset );
+  void setLocalStartDate(int year, int month, int day);
+  void setLocalStartTime(DayTime localTime);
+  void setLocalUtcOffset(int offset);
 
   DayTime calculateLst();
   DayTime calculateHa();
@@ -352,7 +417,7 @@ private:
   // Writes a 16-bit value to persistent (EEPROM) storage
   void writePersistentData(int which, long val);
 
-  void calculateRAandDECSteppers(long& targetRASteps, long& targetDECSteps) const;
+  void calculateRAandDECSteppers(long& targetRASteps, long& targetDECSteps, long pSolutions[6] = nullptr) const;
   void displayStepperPosition();
   void moveSteppersTo(float targetRA, float targetDEC);
 
@@ -377,10 +442,12 @@ private:
   int _maxDECSpeed;
   int _maxAZSpeed;
   int _maxALTSpeed;
+  int _maxFocusSpeed;
   int _maxRAAcceleration;
   int _maxDECAcceleration;
   int _maxAZAcceleration;
   int _maxALTAcceleration;
+  int _maxFocusAcceleration;
   int _backlashCorrectionSteps;
   int _moveRate;
   long _raParkingPos;     // Parking position in slewing steps
@@ -420,18 +487,35 @@ private:
     TMC2209Stepper* _driverDEC;
   #endif  
 
-  #if AZIMUTH_ALTITUDE_MOTORS == 1
-    AccelStepper* _stepperAZ;
-    AccelStepper* _stepperALT;
-    const long _stepsPerAZDegree;    // u-steps/degree (from CTOR)
-    const long _stepsPerALTDegree;   // u-steps/degree (from CTOR)
+  #if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE) || (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
     bool _azAltWasRunning;
-    #if AZ_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART
-      TMC2209Stepper* _driverAZ;
-    #endif 
-    #if ALT_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART
-      TMC2209Stepper* _driverALT;
-    #endif 
+    #if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
+      AccelStepper* _stepperAZ;
+      const long _stepsPerAZDegree;    // u-steps/degree (from CTOR)
+      #if AZ_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART
+        TMC2209Stepper* _driverAZ;
+      #endif 
+    #endif
+    #if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
+      AccelStepper* _stepperALT;
+      const long _stepsPerALTDegree;   // u-steps/degree (from CTOR)
+      #if ALT_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART
+        TMC2209Stepper* _driverALT;
+      #endif 
+    #endif
+  #endif
+
+  #if (FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    bool _focuserWasRunning = false;
+    FocuserMode _focuserMode = FOCUS_IDLE;
+    float _maxFocusRateSpeed;
+    #if (FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE)
+      AccelStepper* _stepperFocus;
+      int _focusRate;
+      #if FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART
+        TMC2209Stepper* _driverFocus;
+      #endif 
+    #endif
   #endif
 
   unsigned long _guideRaEndTime;
@@ -444,6 +528,9 @@ private:
   unsigned long _trackerStoppedAt;
   bool _compensateForTrackerOff;
   volatile int _mountStatus;
+  long _homeOffsetRA;
+  long _homeOffsetDEC;
+
   char scratchBuffer[24];
   bool _stepperWasRunning;
   bool _correctForBacklash;

@@ -65,8 +65,17 @@
   #endif
 #endif
 
-#if (AZIMUTH_ALTITUDE_MOTORS == 0)
-  // Baseline configuration without azimuth & altitude control is valid
+#ifdef AZIMUTH_ALTITUDE_MOTORS
+  #error Configuration out of date! Please remove AZIMUTH_ALTITUDE_MOTORS and replace with AZ_STEPPER_TYPE, AZ_DRIVER_TYPE and ALT_STEPPER_TYPE, ALT_DRIVER_TYPE, or run the online configurator again.
+#endif
+
+#if (AZ_STEPPER_TYPE == STEPPER_TYPE_NONE)
+  // Baseline configuration without azimuth control is valid
+  #if (AZ_DRIVER_TYPE == DRIVER_TYPE_NONE)
+    // Valid ALT stepper and driver combination
+  #else
+    #error Defined an AZ driver, but no AZ stepper.
+  #endif
 #elif defined(__AVR_ATmega2560__)
   // Azimuth configuration
   #if (AZ_STEPPER_TYPE == STEPPER_TYPE_28BYJ48) && (AZ_DRIVER_TYPE == DRIVER_TYPE_ULN2003)
@@ -87,6 +96,25 @@
     #error Unsupported AZ stepper & driver combination. Use at own risk.
   #endif
 
+  #if (AZ_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART)
+    #ifndef AZ_DRIVER_ADDRESS
+      // Serial bus address must be specified for TMC2209 in UART mode
+      #error AZ driver address for DRIVER_TYPE_TMC2209_UART not specified.
+    #endif
+  #endif
+
+#else
+  #error Configuration does not support AZ. Use at own risk.
+#endif 
+
+#if (ALT_STEPPER_TYPE == STEPPER_TYPE_NONE)
+  // Baseline configuration without altitude control is valid
+  #if (ALT_DRIVER_TYPE == DRIVER_TYPE_NONE)
+    // Valid ALT stepper and driver combination
+  #else
+    #error Defined an ALT driver, but no ALT stepper.
+  #endif
+#elif defined(__AVR_ATmega2560__)
   // Altitude configuration
   #if (ALT_STEPPER_TYPE == STEPPER_TYPE_28BYJ48) && (ALT_DRIVER_TYPE == DRIVER_TYPE_ULN2003)
     // Valid ALT stepper and driver combination
@@ -106,13 +134,6 @@
     #error Unsupported ALT stepper & driver combination. Use at own risk.
   #endif
 
-  #if (AZ_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART)
-    #ifndef AZ_DRIVER_ADDRESS
-      // Serial bus address must be specified for TMC2209 in UART mode
-      #error AZ driver address for DRIVER_TYPE_TMC2209_UART not specified.
-    #endif
-  #endif
-
   #if (ALT_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART)
     #ifndef ALT_DRIVER_ADDRESS
       // Serial bus address must be specified for TMC2209 in UART mode
@@ -121,7 +142,45 @@
   #endif
 
 #else
-  #error Configuration does not support AZ/ALT. Use at own risk.
+  #warning Configuration does not support ALT. Use at own risk.
+#endif 
+
+#if (FOCUS_STEPPER_TYPE == STEPPER_TYPE_NONE)
+  // Baseline configuration without focus control is valid
+  #if (FOCUS_DRIVER_TYPE == DRIVER_TYPE_NONE)
+    // Valid Focus stepper and driver combination
+  #else
+    #error Defined an Focus driver, but no Focus stepper.
+  #endif
+#elif defined(__AVR_ATmega2560__)
+  // Focus configuration
+  #if (FOCUS_STEPPER_TYPE == STEPPER_TYPE_28BYJ48) && (FOCUS_DRIVER_TYPE == DRIVER_TYPE_ULN2003)
+    // Valid ALT stepper and driver combination
+  #elif (FOCUS_STEPPER_TYPE == STEPPER_TYPE_28BYJ48) && (FOCUS_DRIVER_TYPE == DRIVER_TYPE_A4988_GENERIC)
+    // Valid ALT stepper and driver combination
+  #elif (FOCUS_STEPPER_TYPE == STEPPER_TYPE_28BYJ48) && (FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_STANDALONE)
+    // Valid ALT stepper and driver combination
+  #elif (FOCUS_STEPPER_TYPE == STEPPER_TYPE_28BYJ48) && (FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART)
+    // Valid ALT stepper and driver combination
+  #elif (FOCUS_STEPPER_TYPE == STEPPER_TYPE_NEMA17) && (FOCUS_DRIVER_TYPE == DRIVER_TYPE_A4988_GENERIC)
+    // Valid ALT stepper and driver combination
+  #elif (FOCUS_STEPPER_TYPE == STEPPER_TYPE_NEMA17) && (FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_STANDALONE)
+    // Valid ALT stepper and driver combination
+  #elif (FOCUS_STEPPER_TYPE == STEPPER_TYPE_NEMA17) && (FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART)
+    // Valid Focus stepper and driver combination
+  #else
+    #error Unsupported Focus stepper & driver combination. Use at own risk.
+  #endif
+
+  #if (FOCUS_STEPPER_TYPE == DRIVER_TYPE_TMC2209_UART)
+    #ifndef FOCUS_DRIVER_ADDRESS
+      // Serial bus address must be specified for TMC2209 in UART mode
+      #error Focus driver address for DRIVER_TYPE_TMC2209_UART not specified.
+    #endif
+  #endif
+
+#else
+  #warning Configuration does not support Focus. Use at own risk.
 #endif 
 
 // Interfaces
@@ -233,7 +292,7 @@
   #endif
 #endif
 
-#if (AZIMUTH_ALTITUDE_MOTORS == 1)
+#if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
   #if (AZ_DRIVER_TYPE == DRIVER_TYPE_ULN2003)
     #if !defined(AZ_IN1_PIN) || !defined(AZ_IN2_PIN) || !defined(AZ_IN3_PIN) || !defined(AZ_IN4_PIN)
       // Required pin assignments missing
@@ -254,7 +313,9 @@
        #error Missing pin assignments for configured AZ DRIVER_TYPE_TMC2209_UART driver serial connection
     #endif
   #endif
+#endif
 
+#if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
   #if (ALT_DRIVER_TYPE == DRIVER_TYPE_ULN2003)
     #if !defined(ALT_IN1_PIN) || !defined(ALT_IN2_PIN) || !defined(ALT_IN3_PIN) || !defined(ALT_IN4_PIN)
       // Required pin assignments missing
@@ -273,6 +334,29 @@
     #if !((defined(ALT_SERIAL_PORT_TX) && defined(ALT_SERIAL_PORT_RX)) || defined(ALT_SERIAL_PORT))
        // Required pin assignments missing for UART serial
        #error Missing pin assignments for configured ALT DRIVER_TYPE_TMC2209_UART driver serial connection
+    #endif
+  #endif
+#endif
+
+#if (FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE)
+  #if (FOCUS_DRIVER_TYPE == DRIVER_TYPE_ULN2003)
+    #if !defined(FOCUS_IN1_PIN) || !defined(FOCUS_IN2_PIN) || !defined(FOCUS_IN3_PIN) || !defined(FOCUS_IN4_PIN)
+      // Required pin assignments missing
+      #error Missing pin assignments for configured Focuser DRIVER_TYPE_ULN2003 driver
+    #endif
+  #elif (FOCUS_DRIVER_TYPE == DRIVER_TYPE_A4988_GENERIC) || (FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_STANDALONE)
+    #if !defined(FOCUS_STEP_PIN) || !defined(FOCUS_DIR_PIN) || !defined(FOCUS_EN_PIN)
+       // Required pin assignments missing
+       #error Missing pin assignments for configured Focuser DRIVER_TYPE_A4988_GENERIC or DRIVER_TYPE_TMC2209_STANDALONE driver
+    #endif
+  #elif (FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART)
+    #if !defined(FOCUS_STEP_PIN) || !defined(FOCUS_DIR_PIN) || !defined(FOCUS_EN_PIN) || !defined(FOCUS_SERIAL_PORT_TX) || !defined(FOCUS_SERIAL_PORT_RX)
+      // Required pin assignments missing (ATmega uses SoftwareSerial for this driver)
+      #error Missing pin assignments for configured Focuser DRIVER_TYPE_TMC2209_UART driver
+    #endif
+    #if !((defined(FOCUS_SERIAL_PORT_TX) && defined(FOCUS_SERIAL_PORT_RX)) || defined(FOCUS_SERIAL_PORT))
+       // Required pin assignments missing for UART serial
+       #error Missing pin assignments for configured Focuser DRIVER_TYPE_TMC2209_UART driver serial connection
     #endif
   #endif
 #endif
@@ -350,7 +434,7 @@
   #endif
 #endif
 
-#if (AZIMUTH_ALTITUDE_MOTORS == 1)
+#if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
   #if (AZ_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART)
     #if defined(AZ_MOTOR_CURRENT_RATING)
       #if (AZ_MOTOR_CURRENT_RATING > 1700)
@@ -370,6 +454,9 @@
         #error "AZ_OPERATING_CURRENT_SETTING is not defined. Please define the operating percentage of your motor in you local configuration file using the AZ_OPERATING_CURRENT_SETTING keyword." 
     #endif
   #endif
+#endif 
+
+#if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
   #if (ALT_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART)
     #if defined(ALT_MOTOR_CURRENT_RATING)
       #if (ALT_MOTOR_CURRENT_RATING > 1700)

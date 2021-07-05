@@ -1,3 +1,51 @@
+**V1.9.19 - Updates**
+- Added support to reset the focus stepper position
+- Fixed some focus validation tests
+
+**V1.9.18 - Updates**
+- Fix RA guiding multiplier not being applied correct
+
+**V1.9.17 - Updates**
+- Fix southern hemisphere returning RA offset by -12hr
+
+**V1.9.16 - Updates**
+- Add Meade extension command to move steppers by steps.
+
+**V1.9.15 - Updates**
+- Fixed incorrect speed for DEC when using 28BYJ-48 steppers
+
+**V1.9.14 - Updates**
+- Fix hardware reporting for "Unknown" boards
+
+**V1.9.13 - Updates**
+- Fix southern hemisphere returning incorrect DEC values (edge case)
+
+**V1.9.12 - Updates**
+- Fix southern hemisphere returning incorrect DEC values
+
+**V1.9.11 - Updates**
+- Add support for focuser on E1 motor for MKS board. 
+- Add focuser command support to LX200 protocol.
+
+**V1.9.10 - Updates**
+- Fixed a bug that caused a compilation fail when enabling LCD_BUTTON_TEST
+- Allowed connection test to be set in local config
+
+**V1.9.09 - Updates**
+- Sample Local Config - disabled as default
+
+**V1.9.08 - Updates**
+- Continuous integration improvements. Checking for version and changelog changes automatically
+
+**V1.9.07 - Updates**
+- ALT and AZ steppers can now be enabled and configured seperately.
+- Reduced hold current for AZ and ALT to 10% if using TMCs and NEMAs.
+- Fixed incorrect response in Meade LX200 guide pulse command.
+
+**V1.9.05 - Updates**
+- Lowered connection baudrate to 19200.
+- Fixed incorrect response in Meade LX200 quit command.
+
 **V1.9.03 - Updates**
 - Removed connection test check and made it standard.
 - Switched motors to normal mode (better perf), but allowed silent mode through XX_UART_STEALTH_MODE defines.

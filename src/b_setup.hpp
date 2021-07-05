@@ -2,6 +2,16 @@
 
 #pragma once
 
+#if defined(OAT_DEBUG_BUILD)
+  PUSH_NO_WARNINGS
+  #if BOARD < 1000
+    #include "avr8-stub.h"
+  #else
+    #error "Debugging not supported on this platform"
+  #endif
+  POP_NO_WARNINGS
+#endif
+
 #include "InterruptCallback.hpp"
 
 #include "Utility.hpp"
@@ -86,6 +96,14 @@ void stepperControlTimerCallback(void* payload) {
 //
 /////////////////////////////////
 void setup() {
+#if defined(OAT_DEBUG_BUILD)
+  #if BOARD < 1000
+    debug_init();  // Setup avr-stub
+    breakpoint();  // Set a breakpoint as soon as possible
+  #else
+    #error "Debugging not supported on this platform"
+  #endif
+#endif
 
   #if USE_GPS == 1
     #if defined(GPS_SERIAL_PORT_RX_PIN) && defined(GPS_SERIAL_PORT_TX_PIN)
@@ -182,7 +200,7 @@ void setup() {
     #endif
   #endif
   
-  #if AZIMUTH_ALTITUDE_MOTORS == 1  
+  #if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
     #if AZ_DRIVER_TYPE == DRIVER_TYPE_A4988_GENERIC || AZ_DRIVER_TYPE == DRIVER_TYPE_TMC2209_STANDALONE || AZ_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART  
       pinMode(AZ_EN_PIN, OUTPUT);
       digitalWrite(AZ_EN_PIN, HIGH);  // Logic HIGH to disable the driver initally
@@ -194,6 +212,9 @@ void setup() {
         AZ_SERIAL_PORT.begin(57600);  // Start HardwareSerial comms with driver
       #endif
     #endif
+  #endif
+    
+  #if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
     #if ALT_DRIVER_TYPE == DRIVER_TYPE_A4988_GENERIC || ALT_DRIVER_TYPE == DRIVER_TYPE_TMC2209_STANDALONE || ALT_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART  
       pinMode(ALT_EN_PIN, OUTPUT);
       digitalWrite(ALT_EN_PIN, HIGH);  // Logic HIGH to disable the driver initally
@@ -206,9 +227,24 @@ void setup() {
       #endif
     #endif
   #endif
+
+  #if (FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    #if FOCUS_DRIVER_TYPE == DRIVER_TYPE_A4988_GENERIC || FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_STANDALONE || FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART  
+      pinMode(FOCUS_EN_PIN, OUTPUT);
+      digitalWrite(FOCUS_EN_PIN, HIGH);  // Logic HIGH to disable the driver initally
+    #endif
+    #if FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART
+      // include TMC2209 UART pins
+      #ifdef FOCUS_SERIAL_PORT
+        FOCUS_SERIAL_PORT.begin(57600);  // Start HardwareSerial comms with driver
+      #endif
+    #endif
+  #endif
 // end microstepping -------------------
 
-  Serial.begin(SERIAL_BAUDRATE);
+  #if !defined(OAT_DEBUG_BUILD)
+    Serial.begin(SERIAL_BAUDRATE);
+  #endif
 
   #if (BLUETOOTH_ENABLED == 1)
   BLUETOOTH_SERIAL.begin(BLUETOOTH_DEVICE_NAME);
@@ -264,6 +300,10 @@ void setup() {
       lcdMenu.addItem("CAL", Calibration_Menu);
     #endif
 
+    #if FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE
+      lcdMenu.addItem("FOC", Focuser_Menu);
+    #endif
+
     #if SUPPORT_INFO_DISPLAY == 1
       lcdMenu.addItem("INFO", Status_Menu);
     #endif
@@ -298,7 +338,7 @@ void setup() {
 
   #if DEC_STEPPER_TYPE == STEPPER_TYPE_28BYJ48
     LOGV1(DEBUG_ANY, F("Configure DEC stepper 28BYJ-48..."));
-    mount.configureDECStepper(DECmotorPin1, DECmotorPin2, DECmotorPin3, DECmotorPin4, RA_STEPPER_SPEED, DEC_STEPPER_ACCELERATION);
+    mount.configureDECStepper(DECmotorPin1, DECmotorPin2, DECmotorPin3, DECmotorPin4, DEC_STEPPER_SPEED, DEC_STEPPER_ACCELERATION);
   #elif DEC_STEPPER_TYPE == STEPPER_TYPE_NEMA17
     LOGV1(DEBUG_ANY, F("Configure DEC stepper NEMA..."));
     mount.configureDECStepper(DECmotorPin1, DECmotorPin2, DEC_STEPPER_SPEED, DEC_STEPPER_ACCELERATION);
@@ -323,7 +363,7 @@ void setup() {
     #endif
   #endif
 
-  #if AZIMUTH_ALTITUDE_MOTORS == 1
+  #if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
     LOGV1(DEBUG_ANY, F("Configure AZ stepper..."));
     #if AZ_DRIVER_TYPE == DRIVER_TYPE_ULN2003 
       mount.configureAZStepper(AZmotorPin1, AZmotorPin2, AZmotorPin3, AZmotorPin4, AZ_STEPPER_SPEED, AZ_STEPPER_ACCELERATION);
@@ -338,6 +378,8 @@ void setup() {
         mount.configureAZdriver(AZ_SERIAL_PORT_RX, AZ_SERIAL_PORT_TX, R_SENSE, AZ_DRIVER_ADDRESS, AZ_RMSCURRENT, AZ_STALL_VALUE);
       #endif
     #endif
+  #endif
+  #if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
     LOGV1(DEBUG_ANY, F("Configure Alt stepper..."));
     #if ALT_DRIVER_TYPE == DRIVER_TYPE_ULN2003 
       mount.configureALTStepper(ALTmotorPin1, ALTmotorPin2, ALTmotorPin3, ALTmotorPin4, ALT_STEPPER_SPEED, ALT_STEPPER_ACCELERATION);
@@ -350,6 +392,23 @@ void setup() {
         mount.configureALTdriver(&ALT_SERIAL_PORT, R_SENSE, ALT_DRIVER_ADDRESS, ALT_RMSCURRENT, ALT_STALL_VALUE);
       #elif SW_SERIAL_UART == 1
         mount.configureALTdriver(ALT_SERIAL_PORT_RX, ALT_SERIAL_PORT_TX, R_SENSE, ALT_DRIVER_ADDRESS, ALT_RMSCURRENT, ALT_STALL_VALUE);
+      #endif
+    #endif
+  #endif
+
+  #if (FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    LOGV1(DEBUG_ANY, F("Configure Focus stepper..."));
+    #if FOCUS_DRIVER_TYPE == DRIVER_TYPE_ULN2003 
+      mount.configureFocusStepper(FOCUSmotorPin1, FOCUSmotorPin2, FOCUSmotorPin3, FOCUSmotorPin4, FOCUS_STEPPER_SPEED, FOCUS_STEPPER_ACCELERATION);
+    #elif FOCUS_DRIVER_TYPE == DRIVER_TYPE_A4988_GENERIC || FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_STANDALONE || FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART
+      mount.configureFocusStepper(FOCUSmotorPin1, FOCUSmotorPin2, FOCUS_STEPPER_SPEED, FOCUS_STEPPER_ACCELERATION);
+    #endif
+    #if FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART
+      LOGV1(DEBUG_ANY, F("Configure Focus driver..."));
+      #if SW_SERIAL_UART == 0
+        mount.configureFocusDriver(&FOCUS_SERIAL_PORT, R_SENSE, FOCUS_DRIVER_ADDRESS, FOCUS_RMSCURRENT, FOCUS_STALL_VALUE);
+      #elif SW_SERIAL_UART == 1
+        mount.configureFocusDriver(FOCUS_SERIAL_PORT_RX, FOCUS_SERIAL_PORT_TX, R_SENSE, FOCUS_DRIVER_ADDRESS, FOCUS_RMSCURRENT, FOCUS_STALL_VALUE);
       #endif
     #endif
   #endif

@@ -74,12 +74,17 @@ const float siderealDegreesInHour = 14.95904348958;
 // CTOR
 //
 /////////////////////////////////
-Mount::Mount(LcdMenu* lcdMenu) 
-  #if AZIMUTH_ALTITUDE_MOTORS == 1
-    : _stepsPerAZDegree(AZIMUTH_STEPS_PER_REV / 360),
-    _stepsPerALTDegree(ALTITUDE_STEPS_PER_REV / 360),
-    _azAltWasRunning(false)
+Mount::Mount(LcdMenu* lcdMenu)
+  #if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE) || (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    : _azAltWasRunning(false)
   #endif
+  #if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    , _stepsPerAZDegree(AZIMUTH_STEPS_PER_REV / 360)
+  #endif
+  #if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    , _stepsPerALTDegree(ALTITUDE_STEPS_PER_REV / 360)
+  #endif
+  
 {
   _lcdMenu = lcdMenu;
   initializeVariables();
@@ -101,6 +106,9 @@ void Mount::initializeVariables()
 
   _totalDECMove = 0;
   _totalRAMove = 0;
+  _homeOffsetRA = 0;
+  _homeOffsetDEC = 0;
+
   _moveRate = 4;
   _backlashCorrectionSteps = 0;
   _correctForBacklash = false;
@@ -237,8 +245,8 @@ void Mount::configureRAStepper(byte pin1, byte pin2, int maxSpeed, int maxAccele
   // Use another AccelStepper to run the RA motor as well. This instance tracks earths rotation.
   _stepperTRK = new AccelStepper(AccelStepper::DRIVER, pin1, pin2);
 
-  _stepperTRK->setMaxSpeed(10000);
-  _stepperTRK->setAcceleration(5000);
+  _stepperTRK->setMaxSpeed(2000);
+  _stepperTRK->setAcceleration(15000);
 
   _stepperRA->setPinsInverted(NORTHERN_HEMISPHERE == RA_INVERT_DIR, false, false);
   _stepperTRK->setPinsInverted(NORTHERN_HEMISPHERE == RA_INVERT_DIR, false, false);
@@ -281,8 +289,8 @@ void Mount::configureDECStepper(byte pin1, byte pin2, int maxSpeed, int maxAccel
   // Use another AccelStepper to run the DEC motor as well. This instance is used for guiding.
   _stepperGUIDE = new AccelStepper(AccelStepper::DRIVER, pin1, pin2);
 
-  _stepperGUIDE->setMaxSpeed(10000);
-  _stepperGUIDE->setAcceleration(5000);
+  _stepperGUIDE->setMaxSpeed(2000);
+  _stepperGUIDE->setAcceleration(15000);
 
   #if DEC_INVERT_DIR == 1
   _stepperDEC->setPinsInverted(true, false, false);
@@ -296,7 +304,7 @@ void Mount::configureDECStepper(byte pin1, byte pin2, int maxSpeed, int maxAccel
 // configureAZStepper / configureALTStepper
 //
 /////////////////////////////////
-#if AZIMUTH_ALTITUDE_MOTORS == 1
+#if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
   #if AZ_DRIVER_TYPE == DRIVER_TYPE_ULN2003
     void Mount::configureAZStepper(byte pin1, byte pin2, byte pin3, byte pin4, int maxSpeed, int maxAcceleration)
     {
@@ -316,6 +324,8 @@ void Mount::configureDECStepper(byte pin1, byte pin2, int maxSpeed, int maxAccel
       _maxAZAcceleration = maxAcceleration;
     }
   #endif
+#endif
+#if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
   #if ALT_DRIVER_TYPE == DRIVER_TYPE_ULN2003
     void Mount::configureALTStepper(byte pin1, byte pin2, byte pin3, byte pin4, int maxSpeed, int maxAcceleration)
     {
@@ -333,6 +343,38 @@ void Mount::configureDECStepper(byte pin1, byte pin2, int maxSpeed, int maxAccel
       _stepperALT->setAcceleration(maxAcceleration);
       _maxALTSpeed = maxSpeed;
       _maxALTAcceleration = maxAcceleration;
+    }
+  #endif  
+#endif
+
+/////////////////////////////////
+//
+// configureFocusStepper
+//
+/////////////////////////////////
+#if (FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE)
+  #if FOCUS_DRIVER_TYPE == DRIVER_TYPE_ULN2003
+    void Mount::configureFocusStepper(byte pin1, byte pin2, byte pin3, byte pin4, int maxSpeed, int maxAcceleration)
+    {
+      _stepperFocus = new AccelStepper((FOCUS_MICROSTEPPING == 1) ? AccelStepper::FULL4WIRE : AccelStepper::HALF4WIRE, pin1, pin2, pin3, pin4);
+      _stepperFocus->setSpeed(0);
+      _stepperFocus->setMaxSpeed(maxSpeed);
+      _stepperFocus->setAcceleration(maxAcceleration);
+      _stepperFocus->setCurrentPosition(50000);
+      _maxFocusRateSpeed = maxSpeed;
+    }
+  #endif
+  #if FOCUS_DRIVER_TYPE == DRIVER_TYPE_A4988_GENERIC || FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_STANDALONE || FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART
+    void Mount::configureFocusStepper(byte pin1, byte pin2, int maxSpeed, int maxAcceleration)
+    {
+      _stepperFocus = new AccelStepper(AccelStepper::DRIVER, pin1, pin2);
+      _stepperFocus->setMaxSpeed(maxSpeed);
+      _stepperFocus->setAcceleration(maxAcceleration);
+      _stepperFocus->setSpeed(0);
+      _stepperFocus->setCurrentPosition(50000);
+      _maxFocusSpeed = maxSpeed;
+      _maxFocusAcceleration = maxAcceleration;
+      _maxFocusRateSpeed = maxSpeed;
     }
   #endif  
 #endif
@@ -367,16 +409,16 @@ bool Mount::connectToDriver( TMC2209Stepper* driver, const char *driverKind ) {
   {
     _driverRA = new TMC2209Stepper(serial, rsense, driveraddress);
     _driverRA->begin();
-    bool _UART_Rx_connected = false;
+    bool UART_Rx_connected = false;
     #if UART_CONNECTION_TEST_TXRX == 1
-        _UART_Rx_connected = connectToDriver( _driverRA, "RA" );
-        if (!_UART_Rx_connected) {
+        UART_Rx_connected = connectToDriver( _driverRA, "RA" );
+        if (!UART_Rx_connected) {
             digitalWrite(RA_EN_PIN, HIGH);    //Disable motor for safety reasons if UART connection fails to avoid operating at incorrect rms_current
         }
     #endif
     _driverRA->toff(0);     
     #if USE_VREF == 0  //By default, Vref is ignored when using UART to specify rms current.
-      _driverRA->I_scale_analog(0);
+      _driverRA->I_scale_analog(false);
     #endif
     LOGV2(DEBUG_STEPPERS, F("Mount: Requested RA motor rms_current: %d mA"), rmscurrent);
     _driverRA->rms_current(rmscurrent, 1.0f); //holdMultiplier = 1 to set ihold = irun
@@ -388,7 +430,7 @@ bool Mount::connectToDriver( TMC2209Stepper* driver, const char *driverKind ) {
     _driverRA->TCOOLTHRS(0xFFFFF);  //xFFFFF);
     _driverRA->semin(0); //disable CoolStep so that current is consistent
     _driverRA->SGTHRS(stallvalue);
-    if (_UART_Rx_connected){
+    if (UART_Rx_connected){
         LOGV2(DEBUG_STEPPERS, F("Mount: Actual RA motor rms_current: %d mA"), _driverRA->rms_current());
         LOGV2(DEBUG_STEPPERS, F("Mount: Actual RA CS value: %d"), _driverRA->cs_actual());
         LOGV2(DEBUG_STEPPERS, F("Mount: Actual RA vsense: %d"), _driverRA->vsense());
@@ -403,16 +445,16 @@ bool Mount::connectToDriver( TMC2209Stepper* driver, const char *driverKind ) {
     _driverRA->beginSerial(19200);
     _driverRA->mstep_reg_select(true);
     _driverRA->pdn_disable(true);
-    bool _UART_Rx_connected = false;
+    bool UART_Rx_connected = false;
     #if UART_CONNECTION_TEST_TXRX == 1
-        _UART_Rx_connected = connectToDriver( _driverRA, "RA" );
-        if (!_UART_Rx_connected) {
+        UART_Rx_connected = connectToDriver( _driverRA, "RA" );
+        if (!UART_Rx_connected) {
             digitalWrite(RA_EN_PIN, HIGH);    //Disable motor for safety reasons if UART connection fails to avoid operating at incorrect rms_current
         }
     #endif
     _driverRA->toff(0);   
     #if USE_VREF == 0  //By default, Vref is ignored when using UART to specify rms current.
-        _driverRA->I_scale_analog(0);
+        _driverRA->I_scale_analog(false);
     #endif
     LOGV2(DEBUG_STEPPERS, F("Mount: Requested RA motor rms_current: %d mA"), rmscurrent);
     _driverRA->rms_current(rmscurrent, 1.0f); //holdMultiplier = 1 to set ihold = irun
@@ -424,7 +466,7 @@ bool Mount::connectToDriver( TMC2209Stepper* driver, const char *driverKind ) {
     _driverRA->fclktrim(4);
     _driverRA->TCOOLTHRS(0xFFFFF);  //xFFFFF);
     _driverRA->SGTHRS(stallvalue);
-    if (_UART_Rx_connected){
+    if (UART_Rx_connected){
         LOGV2(DEBUG_STEPPERS, F("Mount: Actual RA motor rms_current: %d mA"), _driverRA->rms_current());
         LOGV2(DEBUG_STEPPERS, F("Mount: Actual RA CS value: %d"), _driverRA->cs_actual());
         LOGV2(DEBUG_STEPPERS, F("Mount: Actual RA vsense: %d"), _driverRA->vsense());
@@ -444,16 +486,16 @@ bool Mount::connectToDriver( TMC2209Stepper* driver, const char *driverKind ) {
   {
     _driverDEC = new TMC2209Stepper(serial, rsense, driveraddress);
     _driverDEC->begin();
-    bool _UART_Rx_connected = false;
+    bool UART_Rx_connected = false;
     #if UART_CONNECTION_TEST_TXRX == 1
-        _UART_Rx_connected = connectToDriver( _driverDEC, "DEC" );
-        if (!_UART_Rx_connected) {
+        UART_Rx_connected = connectToDriver( _driverDEC, "DEC" );
+        if (!UART_Rx_connected) {
             digitalWrite(DEC_EN_PIN, HIGH);    //Disable motor for safety reasons if UART connection fails to avoid operating at incorrect rms_current
         }
     #endif
     _driverDEC->toff(0);
     #if USE_VREF == 0  //By default, Vref is ignored when using UART to specify rms current.
-        _driverDEC->I_scale_analog(0);
+        _driverDEC->I_scale_analog(false);
     #endif
     LOGV2(DEBUG_STEPPERS, F("Mount: Requested DEC motor rms_current: %d mA"), rmscurrent);
     _driverDEC->rms_current(rmscurrent, 1.0f); //holdMultiplier = 1 to set ihold = irun
@@ -464,7 +506,7 @@ bool Mount::connectToDriver( TMC2209Stepper* driver, const char *driverKind ) {
     _driverDEC->TCOOLTHRS(0xFFFFF);
     _driverDEC->semin(0); //disable CoolStep so that current is consistent
     _driverDEC->SGTHRS(stallvalue);
-    if (_UART_Rx_connected){
+    if (UART_Rx_connected){
         LOGV2(DEBUG_STEPPERS, F("Mount: Actual DEC motor rms_current: %d mA"), _driverDEC->rms_current());
         LOGV2(DEBUG_STEPPERS, F("Mount: Actual DEC CS value: %d"), _driverDEC->cs_actual());
         LOGV2(DEBUG_STEPPERS, F("Mount: Actual DEC vsense: %d"), _driverDEC->vsense());
@@ -479,16 +521,16 @@ bool Mount::connectToDriver( TMC2209Stepper* driver, const char *driverKind ) {
     _driverDEC->beginSerial(19200);
     _driverDEC->mstep_reg_select(true);
     _driverDEC->pdn_disable(true);
-    bool _UART_Rx_connected = false;
+    bool UART_Rx_connected = false;
     #if UART_CONNECTION_TEST_TXRX == 1
-        _UART_Rx_connected = connectToDriver( _driverDEC, "DEC" );
-        if (!_UART_Rx_connected) {
+        UART_Rx_connected = connectToDriver( _driverDEC, "DEC" );
+        if (!UART_Rx_connected) {
             digitalWrite(DEC_EN_PIN, HIGH);    //Disable motor for safety reasons if UART connection fails to avoid operating at incorrect rms_current
         }
     #endif
     _driverDEC->toff(0);
     #if USE_VREF == 0  //By default, Vref is ignored when using UART to specify rms current.
-        _driverDEC->I_scale_analog(0);
+        _driverDEC->I_scale_analog(false);
     #endif
     LOGV2(DEBUG_STEPPERS, F("Mount: Requested DEC motor rms_current: %d mA"), rmscurrent);
     _driverDEC->rms_current(rmscurrent, 1.0f); //holdMultiplier = 1 to set ihold = irun
@@ -499,7 +541,7 @@ bool Mount::connectToDriver( TMC2209Stepper* driver, const char *driverKind ) {
     _driverDEC->TCOOLTHRS(0xFFFFF);
     _driverDEC->semin(0); //disable CoolStep so that current is consistent
     _driverDEC->SGTHRS(stallvalue);
-    if (_UART_Rx_connected){
+    if (UART_Rx_connected){
         LOGV2(DEBUG_STEPPERS, F("Mount: Actual DEC motor rms_current: %d mA"), _driverDEC->rms_current());
         LOGV2(DEBUG_STEPPERS, F("Mount: Actual DEC CS value: %d"), _driverDEC->cs_actual());
         LOGV2(DEBUG_STEPPERS, F("Mount: Actual DEC vsense: %d"), _driverDEC->vsense());
@@ -513,33 +555,33 @@ bool Mount::connectToDriver( TMC2209Stepper* driver, const char *driverKind ) {
 // configureAZdriver
 // TMC2209 UART only
 /////////////////////////////////
-#if (AZIMUTH_ALTITUDE_MOTORS == 1) && (AZ_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART)
+#if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE) && (AZ_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART)
 #if SW_SERIAL_UART == 0
   void Mount::configureAZdriver(Stream *serial, float rsense, byte driveraddress, int rmscurrent, int stallvalue)
   {
     _driverAZ = new TMC2209Stepper(serial, rsense, driveraddress);
     _driverAZ->begin();
-    bool _UART_Rx_connected = false;
+    bool UART_Rx_connected = false;
     #if UART_CONNECTION_TEST_TXRX == 1
-        _UART_Rx_connected = connectToDriver( _driverAZ, "AZ" );
-        if (!_UART_Rx_connected) {
+        UART_Rx_connected = connectToDriver( _driverAZ, "AZ" );
+        if (!UART_Rx_connected) {
             digitalWrite(AZ_EN_PIN, HIGH);    //Disable motor for safety reasons if UART connection fails to avoid operating at incorrect rms_current
         }
     #endif
     _driverAZ->toff(0);
     #if USE_VREF == 0  //By default, Vref is ignored when using UART to specify rms current.
-        _driverAZ->I_scale_analog(0);
+        _driverAZ->I_scale_analog(false);
     #endif
     LOGV2(DEBUG_STEPPERS, F("Mount: Requested AZ motor rms_current: %d mA"), rmscurrent);
-    _driverAZ->rms_current(rmscurrent, 1.0f); //holdMultiplier = 1 to set ihold = irun
+    _driverAZ->rms_current(rmscurrent, 0.1f); //holdMultiplier = 1 to set ihold = irun
     _driverAZ->toff(1);
-    _driverAZ->en_spreadCycle(1);
+    _driverAZ->en_spreadCycle(0);
     _driverAZ->blank_time(24);
     _driverAZ->microsteps(AZ_MICROSTEPPING == 1 ? 0 : AZ_MICROSTEPPING);   // If 1 then disable microstepping
     _driverAZ->TCOOLTHRS(0xFFFFF);  //xFFFFF);
     _driverAZ->semin(0); //disable CoolStep so that current is consistent
     _driverAZ->SGTHRS(stallvalue);
-    if (_UART_Rx_connected){
+    if (UART_Rx_connected){
         LOGV2(DEBUG_STEPPERS, F("Mount: Actual AZ motor rms_current: %d mA"), _driverAZ->rms_current());
         LOGV2(DEBUG_STEPPERS, F("Mount: Actual AZ CS value: %d"), _driverAZ->cs_actual());
         LOGV2(DEBUG_STEPPERS, F("Mount: Actual AZ vsense: %d"), _driverAZ->vsense());
@@ -554,27 +596,27 @@ bool Mount::connectToDriver( TMC2209Stepper* driver, const char *driverKind ) {
     _driverAZ->beginSerial(19200);
     _driverAZ->mstep_reg_select(true);
     _driverAZ->pdn_disable(true);
-    bool _UART_Rx_connected = false;
+    bool UART_Rx_connected = false;
     #if UART_CONNECTION_TEST_TXRX == 1
-        _UART_Rx_connected = connectToDriver( _driverAZ, "AZ" );
-        if (!_UART_Rx_connected) {
+        UART_Rx_connected = connectToDriver( _driverAZ, "AZ" );
+        if (!UART_Rx_connected) {
             digitalWrite(AZ_EN_PIN, HIGH);    //Disable motor for safety reasons if UART connection fails to avoid operating at incorrect rms_current
         }
     #endif
     _driverAZ->toff(0);
     #if USE_VREF == 0  //By default, Vref is ignored when using UART to specify rms current.
-        _driverAZ->I_scale_analog(0);
+        _driverAZ->I_scale_analog(false);
     #endif
     LOGV2(DEBUG_STEPPERS, F("Mount: Requested AZ motor rms_current: %d mA"), rmscurrent);
-    _driverAZ->rms_current(rmscurrent, 1.0f); //holdMultiplier = 1 to set ihold = irun
+    _driverAZ->rms_current(rmscurrent, 0.1f); //holdMultiplier = 1 to set ihold = irun
     _driverAZ->toff(1);
-    _driverAZ->en_spreadCycle(1);
+    _driverAZ->en_spreadCycle(0);
     _driverAZ->blank_time(24);
     _driverAZ->microsteps(AZ_MICROSTEPPING == 1 ? 0 : AZ_MICROSTEPPING);   // If 1 then disable microstepping
     _driverAZ->TCOOLTHRS(0xFFFFF);  //xFFFFF);
     _driverAZ->semin(0); //disable CoolStep so that current is consistent
     _driverAZ->SGTHRS(stallvalue);
-    if (_UART_Rx_connected){
+    if (UART_Rx_connected){
         LOGV2(DEBUG_STEPPERS, F("Mount: Actual AZ motor rms_current: %d mA"), _driverAZ->rms_current());
         LOGV2(DEBUG_STEPPERS, F("Mount: Actual AZ CS value: %d"), _driverAZ->cs_actual());
         LOGV2(DEBUG_STEPPERS, F("Mount: Actual AZ vsense: %d"), _driverAZ->vsense());
@@ -588,33 +630,33 @@ bool Mount::connectToDriver( TMC2209Stepper* driver, const char *driverKind ) {
 // configureALTdriver
 // TMC2209 UART only
 /////////////////////////////////
-#if (AZIMUTH_ALTITUDE_MOTORS == 1) && (ALT_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART)
+#if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE) && (ALT_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART)
 #if SW_SERIAL_UART == 0
   void Mount::configureALTdriver(Stream *serial, float rsense, byte driveraddress, int rmscurrent, int stallvalue)
   {
     _driverALT = new TMC2209Stepper(serial, rsense, driveraddress);
     _driverALT->begin();
-    bool _UART_Rx_connected = false;
+    bool UART_Rx_connected = false;
     #if UART_CONNECTION_TEST_TXRX == 1
-        _UART_Rx_connected = connectToDriver( _driverALT, "ALT" );
-        if (!_UART_Rx_connected) {
+        UART_Rx_connected = connectToDriver( _driverALT, "ALT" );
+        if (!UART_Rx_connected) {
             digitalWrite(ALT_EN_PIN, HIGH);    //Disable motor for safety reasons if UART connection fails to avoid operating at incorrect rms_current
         }
     #endif
     _driverALT->toff(0);
     #if USE_VREF == 0  //By default, Vref is ignored when using UART to specify rms current.
-        _driverALT->I_scale_analog(0);
+        _driverALT->I_scale_analog(false);
     #endif
     LOGV2(DEBUG_STEPPERS, F("Mount: Requested ALT motor rms_current: %d mA"), rmscurrent);
-    _driverALT->rms_current(rmscurrent, 1.0f); //holdMultiplier = 1 to set ihold = irun
+    _driverALT->rms_current(rmscurrent, 0.1f); //holdMultiplier = 1 to set ihold = irun
     _driverALT->toff(1);
-    _driverALT->en_spreadCycle(1);
+    _driverALT->en_spreadCycle(0);
     _driverALT->blank_time(24);
     _driverALT->microsteps(ALT_MICROSTEPPING == 1 ? 0 : ALT_MICROSTEPPING);   // If 1 then disable microstepping
     _driverALT->TCOOLTHRS(0xFFFFF);  //xFFFFF);
     _driverALT->semin(0); //disable CoolStep so that current is consistent
     _driverALT->SGTHRS(stallvalue);
-    if (_UART_Rx_connected){
+    if (UART_Rx_connected){
         LOGV2(DEBUG_STEPPERS, F("Mount: Actual ALT motor rms_current: %d mA"), _driverALT->rms_current());
         LOGV2(DEBUG_STEPPERS, F("Mount: Actual ALT CS value: %d"), _driverALT->cs_actual());
         LOGV2(DEBUG_STEPPERS, F("Mount: Actual ALT vsense: %d"), _driverALT->vsense());
@@ -629,31 +671,112 @@ bool Mount::connectToDriver( TMC2209Stepper* driver, const char *driverKind ) {
     _driverALT->beginSerial(19200);
     _driverALT->mstep_reg_select(true);
     _driverALT->pdn_disable(true);    
-    bool _UART_Rx_connected = false;
     #if UART_CONNECTION_TEST_TXRX == 1
-        _UART_Rx_connected = connectToDriver( _driverALT, "ALT" );
-        if (!_UART_Rx_connected) {
-            digitalWrite(ALT_EN_PIN, HIGH);    //Disable motor for safety reasons if UART connection fails to avoid operating at incorrect rms_current
-        }
+      bool UART_Rx_connected = false;
+      UART_Rx_connected = connectToDriver( _driverALT, "ALT" );
+      if (!UART_Rx_connected) {
+          digitalWrite(ALT_EN_PIN, HIGH);    //Disable motor for safety reasons if UART connection fails to avoid operating at incorrect rms_current
+      }
     #endif
     _driverALT->toff(0);
     #if USE_VREF == 0  //By default, Vref is ignored when using UART to specify rms current.
-        _driverALT->I_scale_analog(0);
+        _driverALT->I_scale_analog(false);
     #endif
     LOGV2(DEBUG_STEPPERS, F("Mount: Requested ALT motor rms_current: %d mA"), rmscurrent);
-    _driverALT->rms_current(rmscurrent, 1.0f); //holdMultiplier = 1 to set ihold = irun
+    _driverALT->rms_current(rmscurrent, 0.1f); //holdMultiplier = 1 to set ihold = irun
     _driverALT->toff(1);
-    _driverALT->en_spreadCycle(1);
+    _driverALT->en_spreadCycle(0);
     _driverALT->blank_time(24);
     _driverALT->microsteps(ALT_MICROSTEPPING == 1 ? 0 : ALT_MICROSTEPPING);   // If 1 then disable microstepping
     _driverALT->TCOOLTHRS(0xFFFFF);  //xFFFFF);
     _driverALT->semin(0); //disable CoolStep so that current is consistent
     _driverALT->SGTHRS(stallvalue);
-    if (_UART_Rx_connected){
-        LOGV2(DEBUG_STEPPERS, F("Mount: Actual ALT motor rms_current: %d mA"), _driverALT->rms_current());
-        LOGV2(DEBUG_STEPPERS, F("Mount: Actual ALT CS value: %d"), _driverALT->cs_actual());
-        LOGV2(DEBUG_STEPPERS, F("Mount: Actual ALT vsense: %d"), _driverALT->vsense());
-    }
+    #if UART_CONNECTION_TEST_TXRX == 1
+      if (UART_Rx_connected){
+          LOGV2(DEBUG_STEPPERS, F("Mount: Actual ALT motor rms_current: %d mA"), _driverALT->rms_current());
+          LOGV2(DEBUG_STEPPERS, F("Mount: Actual ALT CS value: %d"), _driverALT->cs_actual());
+          LOGV2(DEBUG_STEPPERS, F("Mount: Actual ALT vsense: %d"), _driverALT->vsense());
+      }
+    #endif
+  }
+#endif
+#endif
+
+/////////////////////////////////
+//
+// configureFocusdriver
+// TMC2209 UART only
+/////////////////////////////////
+#if (FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE) && (FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART)
+#if SW_SERIAL_UART == 0
+  void Mount::configureFocusDriver(Stream *serial, float rsense, byte driveraddress, int rmscurrent, int stallvalue)
+  {
+    _driverFocus = new TMC2209Stepper(serial, rsense, driveraddress);
+    _driverFocus->begin();
+    #if UART_CONNECTION_TEST_TXRX == 1
+      bool UART_Rx_connected = false;
+      UART_Rx_connected = connectToDriver( _driverFocus, "Focus" );
+      if (!UART_Rx_connected) {
+          digitalWrite(ALT_EN_PIN, HIGH);    //Disable motor for safety reasons if UART connection fails to avoid operating at incorrect rms_current
+      }
+    #endif
+    _driverFocus->toff(0);
+    #if USE_VREF == 0  //By default, Vref is ignored when using UART to specify rms current.
+        _driverFocus->I_scale_analog(false);
+    #endif
+    LOGV2(DEBUG_STEPPERS, F("Mount: Requested Focus motor rms_current: %d mA"), rmscurrent);
+    _driverFocus->rms_current(rmscurrent, 0.1f); //holdMultiplier = 1 to set ihold = irun
+    _driverFocus->toff(1);
+    _driverFocus->en_spreadCycle(FOCUS_UART_STEALTH_MODE == 0);
+    _driverFocus->blank_time(24);
+    _driverFocus->microsteps(FOCUS_MICROSTEPPING == 1 ? 0 : FOCUS_MICROSTEPPING);   // If 1 then disable microstepping
+    _driverFocus->TCOOLTHRS(0xFFFFF);  //xFFFFF);
+    _driverFocus->semin(0); //disable CoolStep so that current is consistent
+    _driverFocus->SGTHRS(stallvalue);
+    #if UART_CONNECTION_TEST_TXRX == 1
+      if (UART_Rx_connected){
+        LOGV2(DEBUG_STEPPERS, F("Mount: Actual Focus motor rms_current: %d mA"), _driverFocus->rms_current());
+        LOGV2(DEBUG_STEPPERS, F("Mount: Actual Focus CS value: %d"), _driverFocus->cs_actual());
+        LOGV2(DEBUG_STEPPERS, F("Mount: Actual Focus vsense: %d"), _driverFocus->vsense());
+      }
+    #endif
+  }
+
+#elif SW_SERIAL_UART == 1
+
+  void Mount::configureFocusDriver(uint16_t FOCUS_SW_RX, uint16_t FOCUS_SW_TX, float rsense, byte driveraddress, int rmscurrent, int stallvalue)
+  {
+    _driverFocus = new TMC2209Stepper(FOCUS_SW_RX, FOCUS_SW_TX, rsense, driveraddress);
+    _driverFocus->beginSerial(19200);
+    _driverFocus->mstep_reg_select(true);
+    _driverFocus->pdn_disable(true);    
+    #if UART_CONNECTION_TEST_TXRX == 1
+      bool UART_Rx_connected = false;
+      UART_Rx_connected = connectToDriver( _driverFocus, "Focus" );
+      if (!UART_Rx_connected) {
+          digitalWrite(FOCUS_EN_PIN, HIGH);    //Disable motor for safety reasons if UART connection fails to avoid operating at incorrect rms_current
+      }
+    #endif
+    _driverFocus->toff(0);
+    #if USE_VREF == 0  //By default, Vref is ignored when using UART to specify rms current.
+        _driverFocus->I_scale_analog(false);
+    #endif
+    LOGV2(DEBUG_STEPPERS, F("Mount: Requested Focus motor rms_current: %d mA"), rmscurrent);
+    _driverFocus->rms_current(rmscurrent, 0.1f); //holdMultiplier = 1 to set ihold = irun
+    _driverFocus->toff(1);
+    _driverFocus->en_spreadCycle(FOCUS_UART_STEALTH_MODE == 0);
+    _driverFocus->blank_time(24);
+    _driverFocus->microsteps(FOCUS_MICROSTEPPING == 1 ? 0 : FOCUS_MICROSTEPPING);   // If 1 then disable microstepping
+    _driverFocus->TCOOLTHRS(0xFFFFF);  //xFFFFF);
+    _driverFocus->semin(0); //disable CoolStep so that current is consistent
+    _driverFocus->SGTHRS(stallvalue);
+    #if UART_CONNECTION_TEST_TXRX == 1
+      if (UART_Rx_connected){
+        LOGV2(DEBUG_STEPPERS, F("Mount: Actual Focus motor rms_current: %d mA"), _driverFocus->rms_current());
+        LOGV2(DEBUG_STEPPERS, F("Mount: Actual Focus CS value: %d"), _driverFocus->cs_actual());
+        LOGV2(DEBUG_STEPPERS, F("Mount: Actual Focus vsense: %d"), _driverFocus->vsense());
+      }
+    #endif
   }
 #endif
 #endif
@@ -748,7 +871,7 @@ void Mount::setRollCalibrationAngle(float angle)
 // getStepsPerDegree
 //
 /////////////////////////////////
-float Mount::getStepsPerDegree(int which)
+float Mount::getStepsPerDegree(StepperAxis which)
 {
   if (which == RA_STEPS) {
     return _stepsPerRADegree;   // u-steps/degree
@@ -766,7 +889,7 @@ float Mount::getStepsPerDegree(int which)
 //
 /////////////////////////////////
 // Function to set steps per degree for each axis. This function stores the value in persistent storage.
-void Mount::setStepsPerDegree(int which, float steps) {
+void Mount::setStepsPerDegree(StepperAxis which, float steps) {
   if (which == DEC_STEPS) {
     _stepsPerDECDegree = steps;
     EEPROMStore::storeDECStepsPerDegree(_stepsPerDECDegree);
@@ -845,7 +968,7 @@ String Mount::getStepperInfo()
 /////////////////////////////////
 String Mount::getMountHardwareInfo()
 {
-  String ret = F("Unknown");
+  String ret = F("Unknown,");
   #if defined(ESP32)
     ret = F("ESP32,");
   #elif defined(__AVR_ATmega2560__)
@@ -879,8 +1002,12 @@ String Mount::getMountHardwareInfo()
     ret += F("NO_GPS,");
   #endif
 
-  #if AZIMUTH_ALTITUDE_MOTORS == 1
+  #if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE) && (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
     ret += F("AUTO_AZ_ALT,");
+  #elif (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    ret += F("AUTO_AZ,");
+  #elif (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    ret += F("AUTO_ALT,");
   #else
     ret += F("NO_AZ_ALT,");
   #endif
@@ -901,6 +1028,12 @@ String Mount::getMountHardwareInfo()
     ret += F("LCD_I2C_MCP23017,");
   #elif DISPLAY_TYPE == DISPLAY_TYPE_LCD_JOY_I2C_SSD1306
     ret += F("LCD_JOY_I2C_SSD1306,");
+  #endif
+
+  #if FOCUS_STEPPER_TYPE == STEPPER_TYPE_NONE
+    ret += F("NO_FOC,");
+  #else
+    ret += F("FOC,");
   #endif
 
   return ret;
@@ -1059,9 +1192,7 @@ const DayTime Mount::currentRA() const {
   // LOGV2(DEBUG_MOUNT_VERBOSE,F("CurrentRA: ZeroPos    : %s"), _zeroPosRA.ToString());
   // LOGV2(DEBUG_MOUNT_VERBOSE,F("CurrentRA: POS (+zp)  : %s"), DayTime(hourPos).ToString());
 
-  bool flipRA = NORTHERN_HEMISPHERE ?
-    _stepperDEC->currentPosition() < 0
-    : _stepperDEC->currentPosition() > 0;
+  bool flipRA = _stepperDEC->currentPosition() < 0;
   if (flipRA)
   {
     hourPos += 12;
@@ -1089,7 +1220,7 @@ const Declination Mount::currentDEC() const {
   //LOGV2(DEBUG_MOUNT_VERBOSE,F("CurrentDEC: DEC Steps  : %d"), _stepperDEC->currentPosition());
   //LOGV2(DEBUG_MOUNT_VERBOSE,F("CurrentDEC: POS        : %s"), String(degreePos).c_str());
 
-  if (degreePos > 0)
+  if (NORTHERN_HEMISPHERE ? degreePos > 0 : degreePos < 0)
   {
     degreePos = -degreePos;
     //LOGV1(DEBUG_MOUNT_VERBOSE,F("CurrentDEC: Greater Zero, flipping."));
@@ -1108,13 +1239,24 @@ const Declination Mount::currentDEC() const {
 // to be at the calculated positions (that they would be if we were slewing there).
 void Mount::syncPosition(DayTime ra, Declination dec)
 {
+  long solutions[6];
   _targetRA = ra;
   _targetDEC = dec;
 
   long targetRAPosition, targetDECPosition;
   LOGV3(DEBUG_MOUNT, "Mount: Sync Position to RA: %s and DEC: %s", _targetRA.ToString(), _targetDEC.ToString());
-  calculateRAandDECSteppers(targetRAPosition, targetDECPosition);
-  LOGV3(DEBUG_STEPPERS, F("STEP-syncPosition: Set current position to RA: %f and DEC: %f"), targetRAPosition, targetDECPosition);
+  calculateRAandDECSteppers(targetRAPosition, targetDECPosition, solutions);
+
+  LOGV3(DEBUG_STEPPERS, F("STEP-syncPosition: Solution 1: RA %l and DEC: %l"), solutions[0],solutions[1]);
+  LOGV3(DEBUG_STEPPERS, F("STEP-syncPosition: Solution 2: RA %l and DEC: %l"), solutions[2],solutions[3]);
+  LOGV3(DEBUG_STEPPERS, F("STEP-syncPosition: Solution 3: RA %l and DEC: %l"), solutions[4],solutions[5]);
+  LOGV3(DEBUG_STEPPERS, F("STEP-syncPosition: Chose solution RA: %l and DEC: %l"), targetRAPosition, targetDECPosition);
+
+  long raMove = targetRAPosition - _stepperRA->currentPosition();
+  long decMove = targetDECPosition - _stepperDEC->currentPosition();
+  LOGV3(DEBUG_STEPPERS, F("STEP-syncPosition: Moving steppers by RA: %l and DEC: %l"), raMove, decMove);
+  _homeOffsetRA -= raMove;
+  _homeOffsetDEC -= decMove;
   _stepperRA->setCurrentPosition(targetRAPosition);     // u-steps (in slew mode)
   _stepperDEC->setCurrentPosition(targetDECPosition);   // u-steps (in slew mode)
 }
@@ -1142,6 +1284,13 @@ void Mount::startSlewingToTarget() {
   _currentRAStepperPosition = _stepperRA->currentPosition();
   long targetRAPosition, targetDECPosition;
   calculateRAandDECSteppers(targetRAPosition, targetDECPosition);
+
+  if (_slewingToHome)
+  {
+    targetRAPosition -= _homeOffsetRA;
+    targetDECPosition -= _homeOffsetDEC;
+  }
+
   moveSteppersTo(targetRAPosition, targetDECPosition);  // u-steps (in slew mode)
 
   _mountStatus |= STATUS_SLEWING | STATUS_SLEWING_TO_TARGET;
@@ -1255,16 +1404,16 @@ void Mount::guidePulse(byte direction, int duration) {
 
     case WEST:
     // We were in tracking mode before guiding, so no need to update microstepping mode on RA driver
-    LOGV2(DEBUG_STEPPERS, F("STEP-guidePulse:  TRK.setSpeed(%f)"), (RA_PULSE_MULTIPLIER + 1) * raGuidingSpeed);
-    _stepperTRK->setSpeed((RA_PULSE_MULTIPLIER + 1) * raGuidingSpeed);   // Faster than siderael
+    LOGV2(DEBUG_STEPPERS, F("STEP-guidePulse:  TRK.setSpeed(%f)"), (RA_PULSE_MULTIPLIER * raGuidingSpeed));
+    _stepperTRK->setSpeed(RA_PULSE_MULTIPLIER * raGuidingSpeed);   // Faster than siderael
     _mountStatus |= STATUS_GUIDE_PULSE | STATUS_GUIDE_PULSE_RA;
     _guideRaEndTime = millis() + duration;
     break;
 
     case EAST:
     // We were in tracking mode before guiding, so no need to update microstepping mode on RA driver
-    LOGV2(DEBUG_STEPPERS, F("STEP-guidePulse:  TRK.setSpeed(%f)"), (RA_PULSE_MULTIPLIER - 1) * raGuidingSpeed);
-    _stepperTRK->setSpeed((RA_PULSE_MULTIPLIER - 1) * raGuidingSpeed);   // Slower than siderael
+    LOGV2(DEBUG_STEPPERS, F("STEP-guidePulse:  TRK.setSpeed(%f)"), (raGuidingSpeed * (2.0f - RA_PULSE_MULTIPLIER)));
+    _stepperTRK->setSpeed(raGuidingSpeed * (2.0f - RA_PULSE_MULTIPLIER));   // Slower than siderael
     _mountStatus |= STATUS_GUIDE_PULSE | STATUS_GUIDE_PULSE_RA;
     _guideRaEndTime = millis() + duration;
     break;
@@ -1364,7 +1513,7 @@ void Mount::setManualSlewMode(bool state) {
 // setSpeed
 //
 /////////////////////////////////
-void Mount::setSpeed(int which, float speedDegsPerSec) {
+void Mount::setSpeed(StepperAxis which, float speedDegsPerSec) {
   if (which == RA_STEPS) {
     float stepsPerSec = speedDegsPerSec * _stepsPerRADegree;   // deg/sec * u-steps/deg = u-steps/sec
     LOGV3(DEBUG_STEPPERS, F("STEP-setSpeed: Set RA speed %f degs/s, which is %f steps/s"), speedDegsPerSec, stepsPerSec);
@@ -1377,7 +1526,7 @@ void Mount::setSpeed(int which, float speedDegsPerSec) {
     // TODO: Are we already in slew mode?
     _stepperDEC->setSpeed(stepsPerSec);
   }
-  #if AZIMUTH_ALTITUDE_MOTORS == 1
+  #if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
   else if (which == AZIMUTH_STEPS) {
     #if AZ_DRIVER_TYPE == DRIVER_TYPE_ULN2003
       float curAzSpeed = _stepperAZ->speed();
@@ -1406,6 +1555,8 @@ void Mount::setSpeed(int which, float speedDegsPerSec) {
       _stepperAZ->setSpeed(stepsPerSec);  
     #endif
   }
+  #endif
+  #if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
   else if (which == ALTITUDE_STEPS) {
     #if ALT_DRIVER_TYPE == DRIVER_TYPE_ULN2003
       float curAltSpeed = _stepperALT->speed();
@@ -1432,6 +1583,51 @@ void Mount::setSpeed(int which, float speedDegsPerSec) {
       float stepsPerSec = speedDegsPerSec * _stepsPerALTDegree;   // deg/sec * u-steps/deg = u-steps/sec
       LOGV3(DEBUG_STEPPERS, F("STEP-setSpeed: Set ALT speed %f degs/s, which is %f steps/s"), speedDegsPerSec, stepsPerSec);
       _stepperALT->setSpeed(stepsPerSec);  
+    #endif
+  }
+  #endif
+  
+  #if (FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE)
+  else if (which == FOCUS_STEPS) {
+    LOGV2(DEBUG_MOUNT, F("Mount: Focuser setSpeed %f"), speedDegsPerSec);
+
+    #if FOCUS_DRIVER_TYPE == DRIVER_TYPE_ULN2003
+      float curFocusSpeed = _stepperFocus->speed();
+
+      // If we are changing directions or asking for a stop, do a stop
+      if ((signbit(speedDegsPerSec) != signbit(curFocusSpeed)) || (speedDegsPerSec == 0))
+      {
+        _stepperFocus->stop();
+        waitUntilStopped(FOCUSING);
+      }
+
+      // Are we starting a move or changing speeds?
+      if (speedDegsPerSec != 0) 
+      {
+        enableFocusMotor();
+        _stepperFocus->setMaxSpeed(speedDegsPerSec);
+        _stepperFocus->moveTo(sign(speedDegsPerSec) * 300000);
+        _focuserMode = FOCUS_TO_TARGET;
+      } // Are we stopping a move?
+      else if (speedDegsPerSec == 0) 
+      {
+        _stepperFocus->stop();
+      }
+    #elif FOCUS_DRIVER_TYPE == DRIVER_TYPE_A4988_GENERIC || FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_STANDALONE || FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART
+      if (speedDegsPerSec != 0)
+      {
+        LOGV2(DEBUG_STEPPERS, F("STEP-setSpeed: Enabling motor and setting speed. Continuous"), speedDegsPerSec);
+        enableFocusMotor();
+        _stepperFocus->setMaxSpeed(speedDegsPerSec);  
+        _stepperFocus->moveTo(sign(speedDegsPerSec) * 300000);
+        _focuserMode = FOCUS_TO_TARGET;
+      }
+      else 
+      {
+        LOGV2(DEBUG_STEPPERS, F("STEP-setSpeed: Stopping motor."), speedDegsPerSec);
+        _stepperFocus->stop();
+      }
+
     #endif
   }
   #endif
@@ -1464,10 +1660,9 @@ void Mount::goHome()
   stopGuiding();
   setTargetToHome();
   startSlewingToTarget();
-  _slewingToHome = true;
 }
 
-#if AZIMUTH_ALTITUDE_MOTORS == 1
+#if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
 /////////////////////////////////
 //
 // isRunningAZ
@@ -1477,6 +1672,9 @@ bool Mount::isRunningAZ() const {
   return _stepperAZ->isRunning();
 }
 
+#endif
+
+#if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
 /////////////////////////////////
 //
 // isRunningALT
@@ -1485,7 +1683,10 @@ bool Mount::isRunningAZ() const {
 bool Mount::isRunningALT() const {
   return _stepperALT->isRunning();
 }
+#endif
 
+
+#if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE) || (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
 /////////////////////////////////
 //
 // moveBy
@@ -1493,6 +1694,7 @@ bool Mount::isRunningALT() const {
 /////////////////////////////////
 void Mount::moveBy(int direction, float arcMinutes)
 {
+  #if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
     if (direction == AZIMUTH_STEPS) {
       enableAzAltMotors();
       #if AZ_DRIVER_TYPE == DRIVER_TYPE_ULN2003
@@ -1502,7 +1704,9 @@ void Mount::moveBy(int direction, float arcMinutes)
       #endif
       _stepperAZ->move(stepsToMove);
     }
-    else if (direction == ALTITUDE_STEPS) {
+  #endif
+  #if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    if (direction == ALTITUDE_STEPS) {
       enableAzAltMotors();
       #if ALT_DRIVER_TYPE == DRIVER_TYPE_ULN2003
         int stepsToMove = arcMinutes * ALTITUDE_STEPS_PER_ARC_MINUTE * ALT_MICROSTEPPING;
@@ -1512,6 +1716,7 @@ void Mount::moveBy(int direction, float arcMinutes)
 
       _stepperALT->move(stepsToMove);
     }
+  #endif
 }
 
 /////////////////////////////////
@@ -1520,20 +1725,39 @@ void Mount::moveBy(int direction, float arcMinutes)
 //
 /////////////////////////////////
 void Mount::disableAzAltMotors() {
-  _stepperALT->stop();
+  #if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
   _stepperAZ->stop();
-  while (_stepperALT->isRunning() || _stepperAZ->isRunning()){
+  #endif
+  #if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
+  _stepperALT->stop();
+  #endif
+
+  #if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
+  while (_stepperAZ->isRunning()) {
     loop();
   }
-  #if AZ_DRIVER_TYPE == DRIVER_TYPE_ULN2003
-    _stepperAZ->disableOutputs();
-  #else
-    digitalWrite(AZ_EN_PIN, HIGH);  // Logic HIGH to disable driver
   #endif
-  #if ALT_DRIVER_TYPE == DRIVER_TYPE_ULN2003
-    _stepperALT->disableOutputs();
-  #else
-    digitalWrite(ALT_EN_PIN, HIGH);  // Logic HIGH to disable driver
+
+  #if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
+  while (_stepperALT->isRunning()) {
+    loop();
+  }
+  #endif
+
+  #if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    #if AZ_DRIVER_TYPE == DRIVER_TYPE_ULN2003
+      _stepperAZ->disableOutputs();
+    #else
+      digitalWrite(AZ_EN_PIN, HIGH);  // Logic HIGH to disable driver
+    #endif
+  #endif
+
+  #if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    #if ALT_DRIVER_TYPE == DRIVER_TYPE_ULN2003
+      _stepperALT->disableOutputs();
+    #else
+      digitalWrite(ALT_EN_PIN, HIGH);  // Logic HIGH to disable driver
+    #endif
   #endif
 }
 
@@ -1543,16 +1767,151 @@ void Mount::disableAzAltMotors() {
 //
 /////////////////////////////////
 void Mount::enableAzAltMotors() {
-  #if AZ_DRIVER_TYPE == DRIVER_TYPE_ULN2003
-    _stepperAZ->enableOutputs();
-  #else
-    digitalWrite(AZ_EN_PIN, LOW);  // Logic LOW to enable driver
+  #if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    #if AZ_DRIVER_TYPE == DRIVER_TYPE_ULN2003
+      _stepperAZ->enableOutputs();
+    #else
+      digitalWrite(AZ_EN_PIN, LOW);  // Logic LOW to enable driver
+    #endif
   #endif
-  #if ALT_DRIVER_TYPE == DRIVER_TYPE_ULN2003
-    _stepperALT->enableOutputs();
-  #else
-    digitalWrite(ALT_EN_PIN, LOW);  // Logic LOW to enable driver
+
+  #if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    #if ALT_DRIVER_TYPE == DRIVER_TYPE_ULN2003
+      _stepperALT->enableOutputs();
+    #else
+      digitalWrite(ALT_EN_PIN, LOW);  // Logic LOW to enable driver
+    #endif
   #endif
+}
+
+#endif
+
+
+#if (FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE)
+/////////////////////////////////
+//
+// isRunningFocus
+//
+/////////////////////////////////
+bool Mount::isRunningFocus() const {
+  return _stepperFocus->isRunning();
+}
+
+/////////////////////////////////
+//
+// getFocusSpeed
+//
+/////////////////////////////////
+float Mount::getFocusSpeed() const {
+  return _stepperFocus->speed();
+}
+
+/////////////////////////////////
+//
+// focusSetSpeedByRate
+//
+/////////////////////////////////
+void Mount::focusSetSpeedByRate(int rate)
+{
+    _focusRate = clamp(rate, 1, 4);
+    float speedFactor[] = { 0, 0.05, 0.2, 0.5, 1.0};
+    _maxFocusRateSpeed = speedFactor[_focusRate] * _maxFocusSpeed;
+    LOGV3(DEBUG_MOUNT,F("Mount::focusSetSpeedByRate: rate is %d -> %f"),_focusRate , _maxFocusRateSpeed );
+    _stepperFocus->setMaxSpeed(_maxFocusRateSpeed);
+
+    if (_stepperFocus->isRunning()) {
+      LOGV1(DEBUG_MOUNT,F("Mount::focusSetSpeedByRate: stepper is already running so adjust speed"));
+      //_stepperFocus->setSpeed(speedFactor[_focusRate ] * _maxFocusSpeed);
+    }
+}
+
+/////////////////////////////////
+//
+// focusContinuousMove
+//
+/////////////////////////////////
+void Mount::focusContinuousMove(FocuserDirection direction)
+{
+  // maxSpeed is set to what the rate dictates
+  setSpeed(FOCUS_STEPS, static_cast<int>(direction) * _maxFocusRateSpeed);
+}
+
+/////////////////////////////////
+//
+// focusMoveBy
+//
+/////////////////////////////////
+void Mount::focusMoveBy(long steps)
+{
+  long targetPosition = _stepperFocus->currentPosition() + steps;
+  LOGV3(DEBUG_MOUNT,F("Mount::focusMoveBy: move by %l steps to %l. Target Mode."),steps, targetPosition);
+  enableFocusMotor();
+  _stepperFocus->moveTo(targetPosition);
+  _focuserMode = FOCUS_TO_TARGET;
+}
+
+/////////////////////////////////
+//
+// focusGetPosition
+//
+/////////////////////////////////
+long Mount::focusGetStepperPosition()
+{
+   return _stepperFocus->currentPosition();
+}
+
+/////////////////////////////////
+//
+// focusSetPosition
+//
+/////////////////////////////////
+void Mount::focusSetStepperPosition(long steps)
+{
+   _stepperFocus->setCurrentPosition(steps);
+}
+
+/////////////////////////////////
+//
+// disableFocusMotor
+//
+/////////////////////////////////
+void Mount::disableFocusMotor() {
+  LOGV1(DEBUG_MOUNT,F("Mount::disableFocusMotor: stopping motor and waiting."));
+  _stepperFocus->stop();
+  waitUntilStopped(FOCUSING);
+
+  LOGV1(DEBUG_MOUNT,F("Mount::disableFocusMotor: disabling motor"));
+  #if (FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    #if FOCUS_DRIVER_TYPE == DRIVER_TYPE_ULN2003
+      _stepperFocus->disableOutputs();
+    #else
+      digitalWrite(FOCUS_EN_PIN, HIGH);  // Logic HIGH to disable driver
+    #endif
+  #endif
+}
+
+/////////////////////////////////
+//
+// enableFocusMotor
+//
+/////////////////////////////////
+void Mount::enableFocusMotor() {
+  LOGV1(DEBUG_MOUNT,F("Mount::enableFocusMotor: enabling."));
+    #if FOCUS_DRIVER_TYPE == DRIVER_TYPE_ULN2003
+      _stepperFocus->enableOutputs();
+    #else
+      digitalWrite(FOCUS_EN_PIN, LOW);  // Logic LOW to enable driver
+  #endif
+}
+
+/////////////////////////////////
+//
+// focusStop
+//
+/////////////////////////////////
+void Mount::focusStop() {
+  LOGV1(DEBUG_MOUNT,F("Mount::focusStop: stopping motor."));
+  _stepperFocus->stop();
 }
 
 #endif
@@ -1643,7 +2002,7 @@ String Mount::getStatusString() {
     status = "Idle,";
   }
 
-  String disp = "-----,";
+  String disp = "------,";
   if (_mountStatus & STATUS_SLEWING) {
     byte slew = slewStatus();
     if (slew & SLEWING_RA) disp[0] = _stepperRA->speed() < 0 ? 'R' : 'r';
@@ -1653,9 +2012,15 @@ String Mount::getStatusString() {
   else if (isSlewingTRK()) {
     disp[2] = 'T';
   }
-  #if AZIMUTH_ALTITUDE_MOTORS == 1
-  if (_stepperAZ->isRunning()) disp[3] = _stepperAZ->speed() < 0 ? 'Z' : 'z';
-  if (_stepperALT->isRunning()) disp[4] = _stepperALT->speed() < 0 ? 'A' : 'a';
+  #if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    if (_stepperAZ->isRunning()) disp[3] = _stepperAZ->speed() < 0 ? 'Z' : 'z';
+  #endif
+  #if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    if (_stepperALT->isRunning()) disp[4] = _stepperALT->speed() < 0 ? 'A' : 'a';
+  #endif
+
+  #if (FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    if (_stepperFocus->isRunning()) disp[5] = _stepperFocus->speed() < 0 ? 'F' : 'f';
   #endif
 
   status += disp;
@@ -1665,6 +2030,11 @@ String Mount::getStatusString() {
 
   status += RAString(COMPACT_STRING | CURRENT_STRING) + ",";
   status += DECString(COMPACT_STRING | CURRENT_STRING) + ",";
+  #if (FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE)
+      status += String(_stepperFocus->currentPosition()) + ",";
+  #else
+    status += ",";
+  #endif
 
   return status;
 }
@@ -1905,6 +2275,9 @@ void Mount::waitUntilStopped(byte direction) {
   while (((direction & (EAST | WEST)) && _stepperRA->isRunning())
          || ((direction & (NORTH | SOUTH)) && _stepperDEC->isRunning())
          || ((direction & TRACKING) && (((_mountStatus & STATUS_TRACKING) == 0) && _stepperTRK->isRunning()))
+         #if FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE
+         || ((direction & FOCUSING) && _stepperFocus->isRunning())
+         #endif
         ) {
     loop();
     yield();
@@ -1974,11 +2347,24 @@ void Mount::interruptLoop()
     }
   }
 
-  #if AZIMUTH_ALTITUDE_MOTORS == 1
+  #if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
   _stepperAZ->run();
+  #endif
+  #if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
   _stepperALT->run();
   #endif
-  
+
+  #if (FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    if (_focuserMode == FOCUS_TO_TARGET)
+    {
+      _stepperFocus->run();
+    }
+    else if (_focuserMode == FOCUS_CONTINUOUS)
+    {
+      _stepperFocus->runSpeed();
+    }
+  #endif
+
 }
 
 /////////////////////////////////
@@ -2006,17 +2392,55 @@ void Mount::loop() {
   }
   #endif
 
-  #if AZIMUTH_ALTITUDE_MOTORS == 1
-  if (!_stepperALT->isRunning() && !_stepperAZ->isRunning() && _azAltWasRunning)
+
+  #if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE) || (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
+  bool oneIsRunning = false;
+  #if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    oneIsRunning |= _stepperAZ->isRunning();
+  #endif
+  #if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    oneIsRunning |= _stepperALT->isRunning();
+  #endif
+
+  if (!oneIsRunning && _azAltWasRunning)
   {
     // One of the motors was running last time through the loop, but not anymore, so shutdown the outputs.
     disableAzAltMotors();
     _azAltWasRunning = false;
   }
-  if (_stepperALT->isRunning() || _stepperAZ->isRunning())
+
+  oneIsRunning = false;
+  #if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    oneIsRunning |= _stepperAZ->isRunning();
+  #endif
+  #if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    oneIsRunning |= _stepperALT->isRunning();
+  #endif
+
+  if (oneIsRunning)
   {
      _azAltWasRunning = true;
   }
+  #endif
+
+  #if (FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE)
+    // LOGV2(DEBUG_MOUNT, F("Mount: Focuser running:  %d"), _stepperFocus->isRunning());
+
+    if(_stepperFocus->isRunning())
+    {
+      LOGV2(DEBUG_MOUNT, F("Mount: Focuser running at speed %f"), _stepperFocus->speed());
+      _focuserWasRunning = true;
+    }
+    else if (_focuserWasRunning)
+    {
+      LOGV1(DEBUG_MOUNT, F("Mount: Focuser is stopped, but was running "));
+      // If focuser was running last time through the loop, but not this time, it has 
+      // either been stopped, or reached the target.
+      _focuserMode = FOCUS_IDLE;
+      _focuserWasRunning = false;
+      disableFocusMotor();
+    }
+
   #endif
 
   #if RA_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART && DEC_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART && USE_AUTOHOME == 1
@@ -2128,6 +2552,8 @@ void Mount::loop() {
           LOGV1(DEBUG_STEPPERS, F("STEP-loop:  TRK.setCurrentPos(0)"));
           _stepperTRK->setCurrentPosition(0);
           _stepperGUIDE->setCurrentPosition(0);
+          _homeOffsetRA = 0;
+          _homeOffsetDEC = 0;
 
           _targetRA = currentRA();
           if (isParking()) {
@@ -2349,7 +2775,7 @@ void Mount::calculateStepperPositions(float raCoord, float decCoord, long& raPos
 //
 // This code tells the steppers to what location to move to, given the select right ascension and declination
 /////////////////////////////////
-void Mount::calculateRAandDECSteppers(long& targetRASteps, long& targetDECSteps) const {
+void Mount::calculateRAandDECSteppers(long& targetRASteps, long& targetDECSteps, long pSolutions[6]) const {
   //LOGV3(DEBUG_MOUNT_VERBOSE,F("Mount::CalcSteppersPre: Current: RA: %s, DEC: %s"), currentRA().ToString(), currentDEC().ToString());
   //LOGV3(DEBUG_MOUNT_VERBOSE,F("Mount::CalcSteppersPre: Target : RA: %s, DEC: %s"), _targetRA.ToString(), _targetDEC.ToString());
   //LOGV2(DEBUG_MOUNT_VERBOSE,F("Mount::CalcSteppersPre: ZeroRA : %s"), _zeroPosRA.ToString());
@@ -2398,6 +2824,16 @@ void Mount::calculateRAandDECSteppers(long& targetRASteps, long& targetDECSteps)
     float const RALimitL = (RA_LIMIT_RIGHT * stepsPerSiderealHour);
     float const RALimitR = (RA_LIMIT_LEFT * stepsPerSiderealHour);  
   #endif
+
+  if (pSolutions != nullptr)
+  {
+    pSolutions[0] = long(-moveRA);
+    pSolutions[1] = long(moveDEC);
+    pSolutions[2] = long(-(moveRA - long(12.0f * stepsPerSiderealHour)));
+    pSolutions[3] = long(-moveDEC);
+    pSolutions[4] = long(-(moveRA + long(12.0f * stepsPerSiderealHour)));
+    pSolutions[5] = long(-moveDEC);
+  }
 
   // If we reach the limit in the positive direction ...
   if (moveRA > RALimitR) {
@@ -2467,6 +2903,67 @@ void Mount::moveSteppersTo(float targetRASteps, float targetDECSteps) {   // Uni
   _stepperDEC->moveTo(targetDECSteps);
 }
 
+/////////////////////////////////
+//
+// moveStepperBy
+//
+/////////////////////////////////
+void Mount::moveStepperBy(StepperAxis direction, long steps)
+{
+  switch (direction)
+  {
+    case RA_STEPS :
+      moveSteppersTo(_stepperRA->targetPosition() + steps, _stepperDEC->targetPosition());
+      _mountStatus |= STATUS_SLEWING | STATUS_SLEWING_TO_TARGET;
+      _totalRAMove = 1.0f * _stepperRA->distanceToGo();
+      #if RA_STEPPER_TYPE == STEPPER_TYPE_NEMA17  // tracking while slewing causes problems (can only run one AccelStepper at a time)
+        if ((_stepperRA->distanceToGo() != 0) || (_stepperDEC->distanceToGo() != 0)) {
+          // Only stop tracking if we're actually going to slew somewhere else, otherwise the 
+          // mount::loop() code won't detect the end of the slewing operation...
+          LOGV1(DEBUG_STEPPERS, "STEP-moveStepperBy: Stop tracking (NEMA steppers)");
+          stopSlewing(TRACKING);
+          _trackerStoppedAt = millis();
+          _compensateForTrackerOff = true;
+
+          // set Slew microsteps for TMC2209 UART once the TRK stepper has stopped
+          #if RA_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART
+            LOGV2(DEBUG_STEPPERS, F("STEP-moveStepperBy: Switching RA driver to microsteps(%d)"), RA_SLEW_MICROSTEPPING);
+            _driverRA->microsteps(RA_SLEW_MICROSTEPPING== 1 ? 0 : RA_SLEW_MICROSTEPPING);
+          #endif
+
+          LOGV2(DEBUG_STEPPERS, F("STEP-moveStepperBy: TRK stopped at %lms"), _trackerStoppedAt);
+        }
+      #endif																					  
+      break;
+    case DEC_STEPS :
+      moveSteppersTo(_stepperRA->targetPosition(), _stepperDEC->targetPosition() + steps);
+      _mountStatus |= STATUS_SLEWING | STATUS_SLEWING_TO_TARGET;
+      _totalDECMove = 1.0f * _stepperDEC->distanceToGo();
+
+      #if DEC_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART
+        // Since normal state for DEC is guide microstepping, switch to slew microstepping here.
+        LOGV2(DEBUG_STEPPERS, F("STEP-moveStepperBy: Switching DEC driver to microsteps(%d)"), DEC_SLEW_MICROSTEPPING);
+        _driverDEC->microsteps(DEC_SLEW_MICROSTEPPING == 1 ? 0 : DEC_SLEW_MICROSTEPPING);
+      #endif
+
+      break;
+    case FOCUS_STEPS:
+      #if FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE
+        focusMoveBy(steps);
+      #endif
+      break;
+    case AZIMUTH_STEPS:
+      #if AZ_STEPPER_TYPE != STEPPER_TYPE_NONE
+        _stepperAZ->moveTo(_stepperAZ->currentPosition() + steps);
+      #endif
+      break;
+    case ALTITUDE_STEPS:
+      #if ALT_STEPPER_TYPE != STEPPER_TYPE_NONE
+        _stepperALT->moveTo(_stepperALT->currentPosition() + steps);
+      #endif
+      break;
+  }
+}
 
 /////////////////////////////////
 //

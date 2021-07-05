@@ -66,9 +66,9 @@ POP_NO_WARNINGS
     #define DECmotorPin2  DEC_DIR_PIN
 #endif
 
-// AZ/ALT Motor pins
-#if AZIMUTH_ALTITUDE_MOTORS == 1
-  // AZ/ALT Pins are defined based on driver type rather than stepper type since the 28BYJ may be used with a TMC2209 or similar driver when modified to bipolar mode
+// AZ Motor pins
+#if (AZ_STEPPER_TYPE != STEPPER_TYPE_NONE)
+  // AZ Pins are defined based on driver type rather than stepper type since the 28BYJ may be used with a TMC2209 or similar driver when modified to bipolar mode
   #if AZ_DRIVER_TYPE == DRIVER_TYPE_ULN2003
     #define AZmotorPin1  AZ_IN1_PIN    
     #define AZmotorPin3  AZ_IN2_PIN    
@@ -78,6 +78,10 @@ POP_NO_WARNINGS
     #define AZmotorPin1  AZ_STEP_PIN
     #define AZmotorPin2  AZ_DIR_PIN
   #endif
+#endif
+
+// ALT Motor pins
+#if (ALT_STEPPER_TYPE != STEPPER_TYPE_NONE)
   #if ALT_DRIVER_TYPE == DRIVER_TYPE_ULN2003
     #define ALTmotorPin1  ALT_IN1_PIN 
     #define ALTmotorPin3  ALT_IN2_PIN 
@@ -87,8 +91,21 @@ POP_NO_WARNINGS
     #define ALTmotorPin1  ALT_STEP_PIN
     #define ALTmotorPin2  ALT_DIR_PIN
   #endif
-
 #endif
+
+// Focus Motor pins
+#if (FOCUS_STEPPER_TYPE != STEPPER_TYPE_NONE)
+  #if FOCUS_DRIVER_TYPE == DRIVER_TYPE_ULN2003
+    #define FOCUSmotorPin1  FOCUS_IN1_PIN 
+    #define FOCUSmotorPin3  FOCUS_IN2_PIN 
+    #define FOCUSmotorPin2  FOCUS_IN3_PIN 
+    #define FOCUSmotorPin4  FOCUS_IN4_PIN     
+  #elif FOCUS_DRIVER_TYPE == DRIVER_TYPE_A4988_GENERIC || FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_STANDALONE || FOCUS_DRIVER_TYPE == DRIVER_TYPE_TMC2209_UART
+    #define FOCUSmotorPin1  FOCUS_STEP_PIN
+    #define FOCUSmotorPin2  FOCUS_DIR_PIN
+  #endif
+#endif
+
 // End Stepper Definitions //////////////
 /////////////////////////////////////////
 
@@ -107,13 +124,14 @@ POP_NO_WARNINGS
 #define HA_Menu 3
 #define Heat_Menu 4
 #define Calibration_Menu 5
-#define Control_Menu 6
-#define Home_Menu 7
-#define POI_Menu 8
-#define Status_Menu 9
+#define Focuser_Menu 6
+#define Control_Menu 7
+#define Home_Menu 8
+#define POI_Menu 9
+#define Status_Menu 10
 
 // How many menu items at most?
-#define MAXMENUITEMS 10
+#define MAXMENUITEMS 11
 
 #if SUPPORT_GUIDED_STARTUP == 1
 bool inStartup = true;        // Start with a guided startup
